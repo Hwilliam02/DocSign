@@ -5,9 +5,9 @@ const config = getConfig();
 
 const start = async (): Promise<void> => {
   const app = await createApp();
-  app.listen(config.PORT, () => {
+  app.listen(config.PORT, "0.0.0.0", () => {
     // eslint-disable-next-line no-console
-    console.log(`Server running on port ${config.PORT}`);
+    console.log(`Server running on 0.0.0.0:${config.PORT}`);
   });
 };
 

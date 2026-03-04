@@ -2,7 +2,7 @@ import { Request, Response } from "express";
 import bcrypt from "bcrypt";
 import jwt, { SignOptions } from "jsonwebtoken";
 import UserModel from "../models/User.js";
-import { CreateUserDTO, UserRole, AppError } from "../types/index.js";
+import { CreateUserDTO, UserRole, AppError, IRequestWithUser } from "../types/index.js";
 import { getConfig } from "../config/index.js";
 
 const config = getConfig();
@@ -41,5 +41,22 @@ export const login = async (req: Request, res: Response): Promise<void> => {
       last_name: user.name.split(" ").slice(1).join(" ") || "",
       role: user.role
     }
+  });
+};
+
+/** GET /auth/me — return the current user from the JWT token */
+export const getMe = async (req: IRequestWithUser, res: Response): Promise<void> => {
+  if (!req.user) throw new AppError("Unauthorized", 401);
+
+  const user = await UserModel.findById(req.user.userId).exec();
+  if (!user) throw new AppError("User not found", 404);
+
+  res.json({
+    id: user._id.toString(),
+    email: user.email,
+    full_name: user.name,
+    first_name: user.name.split(" ")[0] || user.name,
+    last_name: user.name.split(" ").slice(1).join(" ") || "",
+    role: user.role,
   });
 };

@@ -7,7 +7,8 @@ import { Input } from "../components/ui/input";
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "../components/ui/card";
 import { Alert, AlertDescription, AlertTitle } from "../components/ui/alert";
 import { Badge } from "../components/ui/badge";
-import { AlertCircle, CheckCircle2, Download, Copy, PenTool, FileSignature, X } from "lucide-react";
+import { AlertCircle, CheckCircle2, Download, Copy, PenTool, FileSignature, X, Upload } from "lucide-react";
+import * as pdfjsLib from "pdfjs-dist/legacy/build/pdf";
 
 interface EnvelopeInfo {
   envelopeId: string;
@@ -17,12 +18,21 @@ interface EnvelopeInfo {
   status: string;
 }
 
-/* ── Inline SignaturePad (no JWT, no store needed) ─────────────── */
+/* ── Allowed upload constraints ─────────────────────────────────── */
+const ALLOWED_IMAGE_TYPES = ["image/png", "image/jpeg", "image/jpg", "image/gif", "image/bmp", "image/webp"];
+const ALLOWED_UPLOAD_TYPES = [...ALLOWED_IMAGE_TYPES, "application/pdf"];
+const MAX_FILE_SIZE_BYTES = 2 * 1024 * 1024; // 2 MB
+const MAX_FILE_SIZE_LABEL = "2 MB";
+
+/* ── Inline SignaturePad with Draw / Upload tabs ───────────────── */
 const SignaturePadModal: React.FC<{
   onDone: (dataUrl: string) => void;
   onClose: () => void;
   open: boolean;
 }> = ({ onDone, onClose, open }) => {
+  const [tab, setTab] = useState<"draw" | "upload">("draw");
+
+  // ─── Draw state ───
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
   const drawing   = useRef(false);
 
@@ -48,6 +58,95 @@ const SignaturePadModal: React.FC<{
     c.getContext("2d")!.clearRect(0, 0, c.width, c.height);
   };
 
+  // ─── Upload state ───
+  const fileInputRef = useRef<HTMLInputElement | null>(null);
+  const [uploadPreview, setUploadPreview] = useState<string | null>(null);
+  const [uploadError, setUploadError] = useState<string | null>(null);
+  const [uploading, setUploading] = useState(false);
+
+  const resetUpload = () => {
+    setUploadPreview(null);
+    setUploadError(null);
+    if (fileInputRef.current) fileInputRef.current.value = "";
+  };
+
+  /** Convert a single-page PDF to a data URL via pdfjs + canvas */
+  const pdfToDataUrl = async (arrayBuffer: ArrayBuffer): Promise<string> => {
+    const pdf = await pdfjsLib.getDocument({ data: arrayBuffer }).promise;
+    if (pdf.numPages > 1) {
+      throw new Error("PDF has multiple pages. Please upload a single-page signature file.");
+    }
+    const page = await pdf.getPage(1);
+    const viewport = page.getViewport({ scale: 2 });
+    const canvas = document.createElement("canvas");
+    canvas.width = viewport.width;
+    canvas.height = viewport.height;
+    const ctx = canvas.getContext("2d")!;
+    await page.render({ canvasContext: ctx, viewport }).promise;
+    return canvas.toDataURL("image/png");
+  };
+
+  const handleFileChange = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    setUploadError(null);
+    setUploadPreview(null);
+    const file = e.target.files?.[0];
+    if (!file) return;
+
+    // ── Validation checks ──
+    if (!ALLOWED_UPLOAD_TYPES.includes(file.type)) {
+      setUploadError(`Invalid file type "${file.type}". Please upload an image (PNG, JPG, GIF, BMP, WebP) or a single-page PDF.`);
+      return;
+    }
+    if (file.size > MAX_FILE_SIZE_BYTES) {
+      setUploadError(`File is too large (${(file.size / 1024 / 1024).toFixed(1)} MB). Maximum allowed size is ${MAX_FILE_SIZE_LABEL}.`);
+      return;
+    }
+
+    setUploading(true);
+    try {
+      if (file.type === "application/pdf") {
+        const arrayBuffer = await file.arrayBuffer();
+        const dataUrl = await pdfToDataUrl(arrayBuffer);
+        setUploadPreview(dataUrl);
+      } else {
+        // Image file — read directly
+        const reader = new FileReader();
+        reader.onload = () => {
+          const dataUrl = reader.result as string;
+          // Validate the image can actually load
+          const img = new window.Image();
+          img.onload = () => {
+            setUploadPreview(dataUrl);
+            setUploading(false);
+          };
+          img.onerror = () => {
+            setUploadError("The selected file could not be loaded as an image.");
+            setUploading(false);
+          };
+          img.src = dataUrl;
+        };
+        reader.onerror = () => {
+          setUploadError("Failed to read the file.");
+          setUploading(false);
+        };
+        reader.readAsDataURL(file);
+        return; // Async — setUploading(false) handled in callbacks
+      }
+    } catch (err: any) {
+      setUploadError(err?.message || "Failed to process the file.");
+    } finally {
+      setUploading(false);
+    }
+  };
+
+  // Reset state when modal closes / tab switches
+  useEffect(() => {
+    if (!open) {
+      setTab("draw");
+      resetUpload();
+    }
+  }, [open]);
+
   if (!open) return null;
 
   return (
@@ -69,7 +168,7 @@ const SignaturePadModal: React.FC<{
           borderRadius: 12,
           padding: 24,
           width: "90%",
-          maxWidth: 520,
+          maxWidth: 540,
           boxShadow: "0 20px 60px rgba(0,0,0,0.3)",
           position: "relative",
         }}
@@ -87,53 +186,209 @@ const SignaturePadModal: React.FC<{
           <X size={18} color="#94a3b8" />
         </button>
 
-        <h3 style={{ margin: "0 0 4px", fontSize: 18, fontWeight: 600, color: "#0f172a" }}>
-          Draw Your Signature
+        <h3 style={{ margin: "0 0 16px", fontSize: 18, fontWeight: 600, color: "#0f172a" }}>
+          Add Your Signature
         </h3>
-        <p style={{ margin: "0 0 16px", fontSize: 13, color: "#64748b" }}>
-          Draw your signature in the box below.
-        </p>
 
-        <div style={{ display: "flex", justifyContent: "center" }}>
-          <canvas
-            ref={canvasRef}
-            width={460}
-            height={160}
-            onMouseDown={start}
-            onMouseMove={move}
-            onMouseUp={end}
-            onMouseLeave={end}
+        {/* ── Tab switcher ── */}
+        <div style={{ display: "flex", gap: 0, marginBottom: 20, borderBottom: "2px solid #e2e8f0" }}>
+          <button
+            onClick={() => { setTab("draw"); resetUpload(); }}
             style={{
-              border: "2px solid #cbd5e1",
-              borderRadius: 8,
-              cursor: "crosshair",
-              backgroundColor: "#fff",
-              display: "block",
-              maxWidth: "100%",
-              touchAction: "none",
+              flex: 1,
+              padding: "10px 0",
+              fontSize: 14,
+              fontWeight: 600,
+              cursor: "pointer",
+              border: "none",
+              borderBottom: tab === "draw" ? "2px solid #4f46e5" : "2px solid transparent",
+              marginBottom: -2,
+              background: "none",
+              color: tab === "draw" ? "#4f46e5" : "#94a3b8",
+              display: "flex",
+              alignItems: "center",
+              justifyContent: "center",
+              gap: 6,
+              transition: "color 0.15s, border-color 0.15s",
             }}
-          />
+          >
+            <PenTool size={16} /> Draw Signature
+          </button>
+          <button
+            onClick={() => { setTab("upload"); clear(); }}
+            style={{
+              flex: 1,
+              padding: "10px 0",
+              fontSize: 14,
+              fontWeight: 600,
+              cursor: "pointer",
+              border: "none",
+              borderBottom: tab === "upload" ? "2px solid #4f46e5" : "2px solid transparent",
+              marginBottom: -2,
+              background: "none",
+              color: tab === "upload" ? "#4f46e5" : "#94a3b8",
+              display: "flex",
+              alignItems: "center",
+              justifyContent: "center",
+              gap: 6,
+              transition: "color 0.15s, border-color 0.15s",
+            }}
+          >
+            <Upload size={16} /> Upload Signature
+          </button>
         </div>
 
-        <div style={{
-          display: "flex",
-          flexDirection: "row",
-          justifyContent: "flex-end",
-          gap: 8,
-          marginTop: 16,
-          paddingTop: 16,
-          borderTop: "1px solid #e2e8f0",
-        }}>
-          <Button variant="outline" size="sm" onClick={clear}>
-            Clear
-          </Button>
-          <Button variant="outline" size="sm" onClick={onClose}>
-            Cancel
-          </Button>
-          <Button size="sm" onClick={() => onDone(canvasRef.current!.toDataURL("image/png"))}>
-            Apply Signature
-          </Button>
-        </div>
+        {/* ── Draw tab ── */}
+        {tab === "draw" && (
+          <>
+            <p style={{ margin: "0 0 12px", fontSize: 13, color: "#64748b" }}>
+              Draw your signature in the box below.
+            </p>
+            <div style={{ display: "flex", justifyContent: "center" }}>
+              <canvas
+                ref={canvasRef}
+                width={460}
+                height={160}
+                onMouseDown={start}
+                onMouseMove={move}
+                onMouseUp={end}
+                onMouseLeave={end}
+                style={{
+                  border: "2px solid #cbd5e1",
+                  borderRadius: 8,
+                  cursor: "crosshair",
+                  backgroundColor: "#fff",
+                  display: "block",
+                  maxWidth: "100%",
+                  touchAction: "none",
+                }}
+              />
+            </div>
+            <div style={{
+              display: "flex", flexDirection: "row", justifyContent: "flex-end",
+              gap: 8, marginTop: 16, paddingTop: 16, borderTop: "1px solid #e2e8f0",
+            }}>
+              <Button variant="outline" size="sm" onClick={clear}>Clear</Button>
+              <Button variant="outline" size="sm" onClick={onClose}>Cancel</Button>
+              <Button size="sm" onClick={() => onDone(canvasRef.current!.toDataURL("image/png"))}>
+                Apply Signature
+              </Button>
+            </div>
+          </>
+        )}
+
+        {/* ── Upload tab ── */}
+        {tab === "upload" && (
+          <>
+            <p style={{ margin: "0 0 12px", fontSize: 13, color: "#64748b" }}>
+              Upload your signature as an image (PNG, JPG, GIF, BMP, WebP) or a <strong>single-page</strong> PDF.
+              Maximum file size: {MAX_FILE_SIZE_LABEL}.
+            </p>
+
+            {/* Drop zone / file picker */}
+            <div
+              onClick={() => fileInputRef.current?.click()}
+              style={{
+                border: "2px dashed #cbd5e1",
+                borderRadius: 8,
+                padding: uploadPreview ? 12 : 32,
+                textAlign: "center",
+                cursor: "pointer",
+                backgroundColor: "#f8fafc",
+                transition: "border-color 0.15s, background-color 0.15s",
+                minHeight: 160,
+                display: "flex",
+                flexDirection: "column",
+                alignItems: "center",
+                justifyContent: "center",
+              }}
+              onDragOver={(e) => { e.preventDefault(); e.stopPropagation(); }}
+              onDrop={(e) => {
+                e.preventDefault();
+                e.stopPropagation();
+                if (e.dataTransfer.files.length > 0 && fileInputRef.current) {
+                  const dt = new DataTransfer();
+                  dt.items.add(e.dataTransfer.files[0]);
+                  fileInputRef.current.files = dt.files;
+                  fileInputRef.current.dispatchEvent(new Event("change", { bubbles: true }));
+                }
+              }}
+            >
+              <input
+                ref={fileInputRef}
+                type="file"
+                accept=".png,.jpg,.jpeg,.gif,.bmp,.webp,.pdf"
+                style={{ display: "none" }}
+                onChange={handleFileChange}
+              />
+
+              {uploading && (
+                <p style={{ color: "#64748b", fontSize: 13, margin: 0 }}>Processing file…</p>
+              )}
+
+              {!uploading && !uploadPreview && (
+                <>
+                  <Upload size={32} color="#94a3b8" />
+                  <p style={{ color: "#64748b", fontSize: 13, margin: "8px 0 0" }}>
+                    Click to browse or drag & drop your signature file
+                  </p>
+                  <p style={{ color: "#94a3b8", fontSize: 11, margin: "4px 0 0" }}>
+                    PNG, JPG, GIF, BMP, WebP or single-page PDF &middot; Max {MAX_FILE_SIZE_LABEL}
+                  </p>
+                </>
+              )}
+
+              {!uploading && uploadPreview && (
+                <img
+                  src={uploadPreview}
+                  alt="Signature preview"
+                  style={{
+                    maxWidth: "100%",
+                    maxHeight: 140,
+                    objectFit: "contain",
+                    borderRadius: 4,
+                  }}
+                />
+              )}
+            </div>
+
+            {/* Error message */}
+            {uploadError && (
+              <div style={{
+                marginTop: 8,
+                padding: "8px 12px",
+                backgroundColor: "#fef2f2",
+                border: "1px solid #fecaca",
+                borderRadius: 6,
+                color: "#dc2626",
+                fontSize: 12,
+                display: "flex",
+                alignItems: "flex-start",
+                gap: 6,
+              }}>
+                <AlertCircle size={14} style={{ marginTop: 1, flexShrink: 0 }} />
+                <span>{uploadError}</span>
+              </div>
+            )}
+
+            <div style={{
+              display: "flex", flexDirection: "row", justifyContent: "flex-end",
+              gap: 8, marginTop: 16, paddingTop: 16, borderTop: "1px solid #e2e8f0",
+            }}>
+              <Button variant="outline" size="sm" onClick={() => { resetUpload(); }}>
+                Clear
+              </Button>
+              <Button variant="outline" size="sm" onClick={onClose}>Cancel</Button>
+              <Button
+                size="sm"
+                disabled={!uploadPreview}
+                onClick={() => { if (uploadPreview) onDone(uploadPreview); }}
+              >
+                Apply Signature
+              </Button>
+            </div>
+          </>
+        )}
       </div>
     </div>
   );

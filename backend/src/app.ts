@@ -25,7 +25,14 @@ export const createApp = async (): Promise<Application> => {
   app.use(morgan("dev"));
   app.use(
     cors({
-      origin: ["http://localhost:5173"],
+      origin: (origin, cb) => {
+        // Allow requests with no origin (mobile apps, curl, server-to-server)
+        if (!origin) return cb(null, true);
+        // Allow localhost and any private/LAN IP on the expected ports
+        const allowed =
+          /^https?:\/\/(localhost|127\.0\.0\.1|192\.168\.[\d.]+|10\.[\d.]+|172\.(1[6-9]|2[0-9]|3[01])\.[\d.]+)(:\d+)?$/.test(origin);
+        cb(null, allowed);
+      },
       methods: ["GET", "POST", "PUT", "DELETE"],
       credentials: true,
       allowedHeaders: ["Content-Type", "Authorization"],

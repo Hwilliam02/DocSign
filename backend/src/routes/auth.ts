@@ -1,7 +1,8 @@
 import { Router } from "express";
 import { body } from "express-validator";
-import { login, register } from "../controllers/authController.js";
+import { login, register, getMe } from "../controllers/authController.js";
 import { authRateLimiter } from "../middleware/rateLimiter.js";
+import { requireAuth } from "../middleware/auth.js";
 import { asyncHandler } from "../utils/asyncHandler.js";
 
 const router = Router();
@@ -14,5 +15,8 @@ router.post(
 );
 
 router.post("/login", authRateLimiter, [body("email").isEmail(), body("password").isString()], asyncHandler(login));
+
+/** Validate token & return fresh user data */
+router.get("/me", requireAuth as any, asyncHandler(getMe as any));
 
 export default router;

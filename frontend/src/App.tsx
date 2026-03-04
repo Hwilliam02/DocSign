@@ -9,6 +9,7 @@ import DashboardPage from "./pages/DashboardPage";
 import RequireAuth from "./components/RequireAuth";
 import DocumentsPage from "./pages/DocumentsPage";
 import NavBar from "./components/NavBar";
+import AuthGuard from "./components/AuthGuard";
 import { Toaster } from "./components/ui/toaster";
 
 const App: React.FC = () => {
@@ -33,8 +34,9 @@ const App: React.FC = () => {
   }
 
   return (
-    <div className="min-h-screen bg-slate-50 font-sans text-slate-900">
-      <NavBar />
+    <AuthGuard>
+      <div className="min-h-screen bg-slate-50 font-sans text-slate-900">
+        <NavBar />
 
       <main className="max-w-6xl mx-auto px-4 py-8">
         <Routes>
@@ -90,6 +92,7 @@ const App: React.FC = () => {
       </main>
       <Toaster />
     </div>
+    </AuthGuard>
   );
 };
 

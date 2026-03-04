@@ -1,8 +1,9 @@
 import React, { useState } from "react";
 import api from "../api";
 import { useAppDispatch } from "../store/hooks";
-import { setUser } from "../store/userSlice";
+import { setUser, clearUser } from "../store/userSlice";
 import { useNavigate, Link } from "react-router-dom";
+import { persistor } from "../store/store";
 import { Button } from "../components/ui/button";
 import { Input } from "../components/ui/input";
 import { Label } from "../components/ui/label";
@@ -22,9 +23,14 @@ const LoginPage: React.FC = () => {
     setLoading(true);
     setMessage(null);
     try {
+      // Purge any stale persisted state from a previous user session
+      dispatch(clearUser());
+      await persistor.purge();
+
       const resp = await api.post("/auth/login", { email, password });
       const token = resp.data.token;
       dispatch(setUser({ user: resp.data.user, accessToken: token }));
+      await persistor.flush(); // ensure new state is persisted immediately
       navigate("/dashboard");
     } catch (err: any) {
       setMessage(err?.response?.data?.message || "Login failed");

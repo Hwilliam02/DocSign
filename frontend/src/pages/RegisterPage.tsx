@@ -1,8 +1,9 @@
 import React, { useState } from "react";
 import api from "../api";
 import { useAppDispatch } from "../store/hooks";
-import { setUser } from "../store/userSlice";
+import { setUser, clearUser } from "../store/userSlice";
 import { useNavigate, Link } from "react-router-dom";
+import { persistor } from "../store/store";
 import { Button } from "../components/ui/button";
 import { Input } from "../components/ui/input";
 import { Label } from "../components/ui/label";
@@ -23,11 +24,16 @@ const RegisterPage: React.FC = () => {
     setLoading(true);
     setMessage(null);
     try {
+      // Purge any stale persisted state from a previous user session
+      dispatch(clearUser());
+      await persistor.purge();
+
       // Register with admin role so they can upload + place fields
       await api.post("/auth/register", { name, email, password, role: "admin" });
       const resp = await api.post("/auth/login", { email, password });
       const token = resp.data.token;
       dispatch(setUser({ user: resp.data.user, accessToken: token }));
+      await persistor.flush();
       navigate("/dashboard");
     } catch (err: any) {
       setMessage(err?.response?.data?.message || "Registration failed");
