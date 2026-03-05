@@ -154,14 +154,14 @@ export const submitSignature = async (req: Request, res: Response): Promise<void
     throw new AppError("Document hash mismatch - possible tampering", 400);
   }
 
-  // Convert base64 to buffer (use primary sig for saving the file record)
-  const parsePng = (dataUrl: string): Buffer => {
-    const m = dataUrl.match(/^data:image\/(png|jpeg);base64,(.+)$/);
+  // Convert base64 data-URL to buffer, returning the MIME subtype alongside
+  const parseImage = (dataUrl: string): { buffer: Buffer; subtype: string } => {
+    const m = dataUrl.match(/^data:image\/(png|jpe?g|gif|bmp|webp);base64,(.+)$/);
     if (!m) throw new AppError("Invalid signature image format", 400);
-    return Buffer.from(m[2], "base64");
+    return { buffer: Buffer.from(m[2], "base64"), subtype: m[1] };
   };
 
-  const primaryData = parsePng(primarySig);
+  const { buffer: primaryData, subtype: primarySubtype } = parseImage(primarySig);
 
   // Save primary signature image
   const sigFilename = `${Date.now()}-${envelope._id.toString()}.png`;
@@ -183,8 +183,10 @@ export const submitSignature = async (req: Request, res: Response): Promise<void
     for (const field of sigFields) {
       // Use per-field image if available, else fall back to primary
       const fieldDataUrl = sigMap[field._id.toString()] || primarySig;
-      const imgBuffer = parsePng(fieldDataUrl);
-      const pngImage = await pdfDoc.embedPng(imgBuffer);
+      const { buffer: imgBuffer, subtype } = parseImage(fieldDataUrl);
+      const embeddedImage = subtype === "jpeg" || subtype === "jpg"
+        ? await pdfDoc.embedJpg(imgBuffer)
+        : await pdfDoc.embedPng(imgBuffer);
 
       const pageIdx = (field.pageNumber || 1) - 1;
       const page = pages[Math.min(pageIdx, pages.length - 1)];
@@ -193,11 +195,13 @@ export const submitSignature = async (req: Request, res: Response): Promise<void
       const pdfY = ph - (field.y * ph) - (field.height * ph);
       const pdfW = field.width * pw;
       const pdfH = field.height * ph;
-      page.drawImage(pngImage, { x: pdfX, y: pdfY, width: pdfW, height: pdfH });
+      page.drawImage(embeddedImage, { x: pdfX, y: pdfY, width: pdfW, height: pdfH });
     }
   } else {
     // Fallback: bottom-right of first page when no fields were placed
-    const fallbackImage = await pdfDoc.embedPng(primaryData);
+    const fallbackImage = primarySubtype === "jpeg" || primarySubtype === "jpg"
+      ? await pdfDoc.embedJpg(primaryData)
+      : await pdfDoc.embedPng(primaryData);
     const pngDims = fallbackImage.scale(0.5);
     firstPage.drawImage(fallbackImage, {
       x: fallbackWidth - pngDims.width - 50,

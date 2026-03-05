@@ -9,6 +9,8 @@ import { Alert, AlertDescription, AlertTitle } from "../components/ui/alert";
 import { Badge } from "../components/ui/badge";
 import { AlertCircle, CheckCircle2, Download, Copy, PenTool, FileSignature, X, Upload } from "lucide-react";
 import * as pdfjsLib from "pdfjs-dist/legacy/build/pdf";
+import { copyToClipboard } from "../lib/clipboard";
+import { notifyError, notifyApiError } from "../lib/notify";
 
 interface EnvelopeInfo {
   envelopeId: string;
@@ -36,20 +38,35 @@ const SignaturePadModal: React.FC<{
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
   const drawing   = useRef(false);
 
-  const start = (e: React.MouseEvent) => {
+  /** Get (offsetX, offsetY) from either mouse or touch event */
+  const getPos = (e: React.MouseEvent | React.TouchEvent) => {
+    const canvas = canvasRef.current!;
+    if ("touches" in e) {
+      const rect = canvas.getBoundingClientRect();
+      const touch = e.touches[0] || (e as any).changedTouches[0];
+      return { x: touch.clientX - rect.left, y: touch.clientY - rect.top };
+    }
+    return { x: (e as React.MouseEvent).nativeEvent.offsetX, y: (e as React.MouseEvent).nativeEvent.offsetY };
+  };
+
+  const start = (e: React.MouseEvent | React.TouchEvent) => {
+    e.preventDefault();
     drawing.current = true;
     const ctx = canvasRef.current?.getContext("2d");
     if (!ctx) return;
+    const { x, y } = getPos(e);
     ctx.beginPath();
     ctx.lineWidth = 2.5;
     ctx.strokeStyle = "#1a1f36";
-    ctx.moveTo(e.nativeEvent.offsetX, e.nativeEvent.offsetY);
+    ctx.moveTo(x, y);
   };
-  const move = (e: React.MouseEvent) => {
+  const move = (e: React.MouseEvent | React.TouchEvent) => {
     if (!drawing.current) return;
+    e.preventDefault();
     const ctx = canvasRef.current?.getContext("2d");
     if (!ctx) return;
-    ctx.lineTo(e.nativeEvent.offsetX, e.nativeEvent.offsetY);
+    const { x, y } = getPos(e);
+    ctx.lineTo(x, y);
     ctx.stroke();
   };
   const end = () => { drawing.current = false; };
@@ -109,14 +126,21 @@ const SignaturePadModal: React.FC<{
         const dataUrl = await pdfToDataUrl(arrayBuffer);
         setUploadPreview(dataUrl);
       } else {
-        // Image file — read directly
+        // Image file — load via Image + canvas to normalise to PNG
         const reader = new FileReader();
         reader.onload = () => {
           const dataUrl = reader.result as string;
-          // Validate the image can actually load
           const img = new window.Image();
           img.onload = () => {
-            setUploadPreview(dataUrl);
+            // Re-draw onto a canvas to guarantee a PNG data URL regardless
+            // of source format (gif, bmp, webp, jpg, etc.)
+            const canvas = document.createElement("canvas");
+            canvas.width = img.naturalWidth;
+            canvas.height = img.naturalHeight;
+            const ctx = canvas.getContext("2d")!;
+            ctx.drawImage(img, 0, 0);
+            const pngDataUrl = canvas.toDataURL("image/png");
+            setUploadPreview(pngDataUrl);
             setUploading(false);
           };
           img.onerror = () => {
@@ -253,6 +277,9 @@ const SignaturePadModal: React.FC<{
                 onMouseMove={move}
                 onMouseUp={end}
                 onMouseLeave={end}
+                onTouchStart={start}
+                onTouchMove={move}
+                onTouchEnd={end}
                 style={{
                   border: "2px solid #cbd5e1",
                   borderRadius: 8,
@@ -505,7 +532,18 @@ const SignPage: React.FC = () => {
         setInfo(infoResp.data as EnvelopeInfo);
         setFields(fieldsResp.data as Field[]);
       } catch (err: any) {
-        setError(err?.response?.data?.message || "Invalid or expired signing link");
+        if (err?.response?.data?.message) {
+          // Backend returned a clear error (e.g. token expired, already signed)
+          setError(err.response.data.message);
+        } else {
+          // Network / CORS / firewall / unknown error — show connectivity hint
+          setError(
+            "Unable to load the signing page. If you are on a different device " +
+            "(e.g. mobile), make sure the server at " +
+            `${window.location.protocol}//${window.location.hostname}:4000 ` +
+            "is reachable and that no firewall is blocking the connection."
+          );
+        }
       } finally {
         setLoading(false);
       }
@@ -549,7 +587,7 @@ const SignPage: React.FC = () => {
     // Validate every field is filled
     if (missingFields.length > 0) {
       const types = missingFields.map((f) => f.type).join(", ");
-      alert(`Please complete all fields before submitting. Missing: ${types}`);
+      notifyError("Incomplete fields", `Please complete all fields before submitting. Missing: ${types}`);
       return;
     }
 
@@ -559,7 +597,7 @@ const SignPage: React.FC = () => {
       .map((f) => ({ fieldId: f._id!, data: signedFields[f._id!] }));
 
     if (fieldSignatures.length === 0) {
-      alert("Please sign at least one signature field before submitting.");
+      notifyError("No signature", "Please sign at least one signature field before submitting.");
       return;
     }
 
@@ -584,7 +622,7 @@ const SignPage: React.FC = () => {
       setFields([]);
       setPdfKey((k) => k + 1);
     } catch (err: any) {
-      alert(err?.response?.data?.message || "Failed to submit signature");
+      notifyApiError(err, "Failed to submit signature");
     } finally {
       setSubmitting(false);
     }
@@ -673,7 +711,7 @@ const SignPage: React.FC = () => {
               </Button>
               <Button 
                 variant="outline" 
-                onClick={() => { navigator.clipboard.writeText(downloadUrl); alert("Download link copied!"); }}
+                onClick={() => copyToClipboard(downloadUrl, "Download link")}
                 className="bg-white"
               >
                 <Copy className="w-4 h-4 mr-2" />

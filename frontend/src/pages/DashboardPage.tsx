@@ -4,18 +4,19 @@ import api from "../api";
 import { useAppSelector } from "../store/hooks";
 import { Card, CardContent, CardHeader, CardTitle } from "../components/ui/card";
 import { Button } from "../components/ui/button";
-import { Badge } from "../components/ui/badge";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "../components/ui/table";
 import { FileText, Plus, FileSignature, CheckCircle, Clock, File } from "lucide-react";
+import { copyToClipboard } from "../lib/clipboard";
+import { buildSigningLink, getStatusBadge, getEnvelopeForDoc, EnvelopeRef } from "../lib/helpers";
+import { notifyApiError } from "../lib/notify";
 
 interface RecentDoc { _id: string; title: string; status: string; createdAt: string }
-interface Envelope { _id: string; documentId: string; status: string; signingToken: string; signerEmail: string }
 
 const DashboardPage: React.FC = () => {
   const user = useAppSelector((s) => s.user.user);
   const navigate = useNavigate();
   const [docs, setDocs] = useState<RecentDoc[]>([]);
-  const [envelopes, setEnvelopes] = useState<Envelope[]>([]);
+  const [envelopes, setEnvelopes] = useState<EnvelopeRef[]>([]);
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
@@ -27,29 +28,19 @@ const DashboardPage: React.FC = () => {
         ]);
         setDocs(docsResp.data || []);
         setEnvelopes(envResp.data || []);
-      } catch { /* ignore */ }
+      } catch (err) {
+        notifyApiError(err, "Failed to load dashboard data");
+      }
       finally { setLoading(false); }
     })();
   }, []);
 
-  const getEnvelope = (docId: string) =>
-    [...envelopes].reverse().find((e) => e.documentId === docId);
+  const getEnvelope = (docId: string) => getEnvelopeForDoc(envelopes, docId);
 
   const total = docs.length;
   const draft = docs.filter((d) => d.status === "draft").length;
   const sent  = docs.filter((d) => d.status === "sent").length;
   const signed = docs.filter((d) => d.status === "signed").length;
-
-  const getStatusBadge = (status: string) => {
-    switch (status) {
-      case "signed":
-        return <Badge className="bg-emerald-100 text-emerald-800 hover:bg-emerald-100 border-emerald-200">Signed</Badge>;
-      case "sent":
-        return <Badge className="bg-blue-100 text-blue-800 hover:bg-blue-100 border-blue-200">Sent</Badge>;
-      default:
-        return <Badge variant="secondary" className="bg-slate-100 text-slate-700 hover:bg-slate-100">Draft</Badge>;
-    }
-  };
 
   return (
     <div className="space-y-8">
@@ -169,10 +160,7 @@ const DashboardPage: React.FC = () => {
                               size="sm" 
                               variant="outline" 
                               className="h-8 border-indigo-200 text-indigo-700 hover:bg-indigo-50"
-                              onClick={() => { 
-                                navigator.clipboard.writeText(`${window.location.origin}/sign/${env.signingToken}`); 
-                                alert("Signing link copied!"); 
-                              }}
+                              onClick={() => copyToClipboard(buildSigningLink(env.signingToken), "Signing link")}
                             >
                               Share Link
                             </Button>

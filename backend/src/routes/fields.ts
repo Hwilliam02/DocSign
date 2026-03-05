@@ -4,6 +4,7 @@ import { UserRole } from "../types/index.js";
 import { createField, getFieldsForEnvelope, deleteField } from "../controllers/fieldController.js";
 import { body } from "express-validator";
 import { asyncHandler } from "../utils/asyncHandler.js";
+import { validate } from "../middleware/validate.js";
 
 const router = Router();
 
@@ -17,9 +18,8 @@ router.post(
     body("y").isFloat({ min: 0, max: 1 }),
     body("width").isFloat({ min: 0, max: 1 }),
     body("height").isFloat({ min: 0, max: 1 }),
-    body("type").isIn(["signature", "text", "date"])
-  ],
-  asyncHandler(createField)
+    body("type").isIn(["signature", "text", "date", "name"])
+  ],  validate,  asyncHandler(createField)
 );
 
 router.delete("/:fieldId", requireAuth, asyncHandler(deleteField));

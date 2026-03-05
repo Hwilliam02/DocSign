@@ -48,7 +48,7 @@ export interface FieldDTO {
   y: number; // fraction from top (0..1)
   width: number; // fraction of page width (0..1)
   height: number; // fraction of page height (0..1)
-  type: "signature" | "text" | "date";
+  type: "signature" | "text" | "date" | "name";
 }
 
 export interface CreateEnvelopeDTO {

@@ -2,7 +2,6 @@ import React, { useEffect, useRef, useState } from "react";
 import { Stage, Layer, Rect, Text, Image as KonvaImage } from "react-konva";
 import api from "../api";
 import * as pdfjsLib from "pdfjs-dist/legacy/build/pdf";
-import { store } from "../store/store";
 import { Button } from "./ui/button";
 
 export type FieldType = "signature" | "text" | "date" | "name";
@@ -143,21 +142,20 @@ const PdfKonvaEditor: React.FC<Props> = ({
       try {
         setError(null);
 
-        const storeToken = !token ? store.getState().user?.accessToken : null;
-        const authHeaders: Record<string, string> = storeToken
-          ? { Authorization: `Bearer ${storeToken}` } : {};
-
+        // The axios interceptor in api/index.ts automatically attaches
+        // the JWT Authorization header from the Redux store for every
+        // request, so we don't need to handle auth headers manually.
         let arrayBuffer: ArrayBuffer;
 
         if (token) {
-          // Signer path — token-based endpoint; no JWT needed, no document fetch needed
+          // Signer path — token-based endpoint; no JWT needed
           const resp = await api.get(`/sign/${token}/file`, { responseType: "arraybuffer" });
           arrayBuffer = resp.data as ArrayBuffer;
         } else {
           // Sender path — need document record to get filename, then fetch the file
-          const docResp = await api.get(`/documents/${documentId}`, { headers: authHeaders });
+          const docResp = await api.get(`/documents/${documentId}`);
           const filename = docResp.data.originalFilename as string;
-          const resp = await api.get(`/files/original/${filename}`, { responseType: "arraybuffer", headers: authHeaders });
+          const resp = await api.get(`/files/original/${filename}`, { responseType: "arraybuffer" });
           arrayBuffer = resp.data as ArrayBuffer;
         }
 
@@ -167,9 +165,7 @@ const PdfKonvaEditor: React.FC<Props> = ({
         await renderPage(pdf, 1);
 
         if (envelopeId && !externalFields) {
-          const fieldsResp = await api.get(`/fields/${envelopeId}`, {
-            headers: storeToken ? { Authorization: `Bearer ${storeToken}` } : {},
-          });
+          const fieldsResp = await api.get(`/fields/${envelopeId}`);
           setFields(fieldsResp.data as Field[]);
         }
       } catch (err: any) {
@@ -317,6 +313,9 @@ const PdfKonvaEditor: React.FC<Props> = ({
               onMouseDown={readOnly ? undefined : onMouseDown}
               onMouseMove={readOnly ? undefined : onMouseMove}
               onMouseUp={readOnly ? undefined : onMouseUp}
+              onTouchStart={readOnly ? undefined : onMouseDown}
+              onTouchMove={readOnly ? undefined : onMouseMove}
+              onTouchEnd={readOnly ? undefined : onMouseUp}
             >
               <Layer>
                 {pageFields.map((f, i) => {
@@ -330,18 +329,18 @@ const PdfKonvaEditor: React.FC<Props> = ({
 
                   return (
                     <React.Fragment key={i}>
-                      {/* Only show the field rectangle if NOT signed */}
-                      {!isSigned && (
-                        <Rect
-                          x={px} y={py} width={pw} height={ph}
-                          fill={`${color}18`}
-                          stroke={color} strokeWidth={2}
-                          cornerRadius={4}
-                          onClick={() => readOnly && onFieldClick && onFieldClick(f)}
-                          onMouseEnter={(e: any) => { if (readOnly) e.target.getStage().container().style.cursor = "pointer"; }}
-                          onMouseLeave={(e: any) => { if (readOnly) e.target.getStage().container().style.cursor = "default"; }}
-                        />
-                      )}
+                      {/* Field background rectangle — always visible, always clickable before submission */}
+                      <Rect
+                        x={px} y={py} width={pw} height={ph}
+                        fill={isSigned ? "transparent" : `${color}18`}
+                        stroke={isSigned ? "#22c55e" : color}
+                        strokeWidth={2}
+                        cornerRadius={4}
+                        onClick={() => readOnly && onFieldClick && onFieldClick(f)}
+                        onTap={() => readOnly && onFieldClick && onFieldClick(f)}
+                        onMouseEnter={(e: any) => { if (readOnly) e.target.getStage().container().style.cursor = "pointer"; }}
+                        onMouseLeave={(e: any) => { if (readOnly) e.target.getStage().container().style.cursor = "default"; }}
+                      />
                       {/* Signature: show drawn image; other types: show text */}
                       {isSigned && sigImg ? (
                         <KonvaImage

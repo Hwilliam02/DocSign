@@ -49,10 +49,14 @@ const AuthGuard: React.FC<{ children: React.ReactNode }> = ({ children }) => {
             })
           );
         }
-      } catch {
-        // Token is invalid / expired — clear everything
-        dispatch(clearUser());
-        await persistor.purge();
+      } catch (err: any) {
+        // Only clear on explicit 401 (expired/invalid token).
+        // Network errors (server down, timeout, etc.) should NOT log the
+        // user out — we just silently skip validation and try again next load.
+        if (err?.response?.status === 401) {
+          dispatch(clearUser());
+          await persistor.purge();
+        }
       }
     })();
   }, []); // eslint-disable-line react-hooks/exhaustive-deps

@@ -20,7 +20,15 @@ const config = getConfig();
 export const createApp = async (): Promise<Application> => {
   const app: Application = express();
 
-  app.use(helmet());
+  app.use(
+    helmet({
+      // Disable policies that conflict with cross-origin API access.
+      // The frontend runs on a different port, so every request is cross-origin.
+      crossOriginResourcePolicy: false,
+      crossOriginEmbedderPolicy: false,
+      crossOriginOpenerPolicy: false,
+    })
+  );
   // HTTP request logging
   app.use(morgan("dev"));
   app.use(

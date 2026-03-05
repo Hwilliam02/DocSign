@@ -3,9 +3,11 @@ import api from "../api";
 import { useAppSelector } from "../store/hooks";
 import { useNavigate } from "react-router-dom";
 import { Button } from "../components/ui/button";
-import { Badge } from "../components/ui/badge";
 import { Card, CardContent } from "../components/ui/card";
 import { FileText, Plus, Eye, Link as LinkIcon, Download, PenTool } from "lucide-react";
+import { copyToClipboard } from "../lib/clipboard";
+import { buildSigningLink, getStatusBadge, getEnvelopeForDoc, EnvelopeRef } from "../lib/helpers";
+import { notifyApiError } from "../lib/notify";
 
 interface Doc {
   _id: string;
@@ -14,17 +16,9 @@ interface Doc {
   status: string;
 }
 
-interface Envelope {
-  _id: string;
-  documentId: string;
-  status: string;
-  signingToken: string;
-  signerEmail: string;
-}
-
 const DocumentsPage: React.FC = () => {
   const [docs, setDocs] = useState<Doc[]>([]);
-  const [envelopes, setEnvelopes] = useState<Envelope[]>([]);
+  const [envelopes, setEnvelopes] = useState<EnvelopeRef[]>([]);
   const [loading, setLoading] = useState(false);
   const user = useAppSelector((s) => s.user.user);
   const navigate = useNavigate();
@@ -40,7 +34,7 @@ const DocumentsPage: React.FC = () => {
         setDocs(docsResp.data || []);
         setEnvelopes(envResp.data || []);
       } catch (err) {
-        console.error(err);
+        notifyApiError(err, "Failed to load documents");
       } finally {
         setLoading(false);
       }
@@ -48,9 +42,7 @@ const DocumentsPage: React.FC = () => {
     load();
   }, []);
 
-  // Find the most recent envelope for a document (last in array = most recent by insertion)
-  const getEnvelope = (documentId: string) =>
-    [...envelopes].reverse().find((e) => e.documentId === documentId);
+  const getEnvelope = (documentId: string) => getEnvelopeForDoc(envelopes, documentId);
 
   const openEditor = (documentId: string) => {
     navigate(`/field-editor?documentId=${documentId}`);
@@ -58,17 +50,6 @@ const DocumentsPage: React.FC = () => {
 
   const openPreview = (doc: Doc) => {
     navigate(`/field-editor?documentId=${doc._id}&preview=true`);
-  };
-
-  const getStatusBadge = (status: string) => {
-    switch (status) {
-      case "signed":
-        return <Badge className="bg-emerald-100 text-emerald-800 hover:bg-emerald-100 border-emerald-200">Signed</Badge>;
-      case "sent":
-        return <Badge className="bg-blue-100 text-blue-800 hover:bg-blue-100 border-blue-200">Sent</Badge>;
-      default:
-        return <Badge variant="secondary" className="bg-slate-100 text-slate-700 hover:bg-slate-100">Draft</Badge>;
-    }
   };
 
   return (
@@ -138,10 +119,7 @@ const DocumentsPage: React.FC = () => {
                       <Button
                         variant="outline"
                         size="sm"
-                        onClick={() => { 
-                          navigator.clipboard.writeText(`${window.location.origin}/sign/${env.signingToken}`); 
-                          alert("Signing link copied!"); 
-                        }}
+                        onClick={() => copyToClipboard(buildSigningLink(env.signingToken), "Signing link")}
                         className="border-indigo-200 text-indigo-700 hover:bg-indigo-50"
                       >
                         <LinkIcon className="mr-2 h-4 w-4" /> Share Link

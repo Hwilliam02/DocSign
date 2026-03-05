@@ -8,6 +8,9 @@ import { Input } from "../components/ui/input";
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "../components/ui/card";
 import { Alert, AlertDescription } from "../components/ui/alert";
 import { ArrowLeft, Lock, CheckCircle2, Copy, Check, PenTool, Send, User, Calendar, Type } from "lucide-react";
+import { copyToClipboard } from "../lib/clipboard";
+import { buildSigningLink } from "../lib/helpers";
+import { notifyApiError } from "../lib/notify";
 
 const FIELD_TYPES: { type: FieldType; label: string; icon: React.ReactNode; color: string; bg: string; border: string }[] = [
   { type: "signature", label: "Signature", icon: <PenTool className="h-4 w-4 mr-2" />, color: "text-red-600", bg: "bg-red-50", border: "border-red-200" },
@@ -45,7 +48,7 @@ const FieldEditorPage: React.FC = () => {
     if (d) setDocumentId(d);
     if (pv) setIsPreview(true);
     if (e) setEnvelopeId(e);
-    if (t) setSigningLink(`${window.location.origin}/sign/${t}`);
+    if (t) setSigningLink(buildSigningLink(t));
     if (mode) setSignMode(mode);
     if (me?.email) setSignerEmail(me.email);
   }, [location.search, me]);
@@ -71,11 +74,11 @@ const FieldEditorPage: React.FC = () => {
       const eid = resp.data.envelopeId as string;
       const tok = resp.data.token as string;
       setEnvelopeId(eid);
-      setSigningLink(`${window.location.origin}/sign/${tok}`);
+      setSigningLink(buildSigningLink(tok));
       // Update URL without reload — persist mode so it survives
       navigate(`/field-editor?documentId=${documentId}&envelopeId=${eid}&token=${tok}&mode=${signMode}`, { replace: true });
     } catch (err: any) {
-      alert(err?.response?.data?.message || "Failed to create envelope");
+      notifyApiError(err, "Failed to create envelope");
     } finally {
       setCreating(false);
     }
@@ -298,8 +301,8 @@ const FieldEditorPage: React.FC = () => {
                       </code>
                       <Button
                         size="sm"
-                        onClick={() => {
-                          navigator.clipboard.writeText(signingLink);
+                        onClick={async () => {
+                          await copyToClipboard(signingLink, "Signing link");
                           setLinkCopied(true);
                           setTimeout(() => setLinkCopied(false), 2000);
                         }}
