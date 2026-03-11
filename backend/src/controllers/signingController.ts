@@ -39,6 +39,14 @@ export const serveSignerFile = async (req: Request, res: Response): Promise<void
     return;
   }
 
+  // When document is partially signed (another signer completed), serve
+  // the intermediate PDF so the next signer can see previous signatures.
+  if (document.status === "partially_signed" && document.finalFilePath) {
+    if (!fsSync.default.existsSync(document.finalFilePath)) throw new AppError("Intermediate file missing on disk", 404);
+    res.sendFile(document.finalFilePath);
+    return;
+  }
+
   // Serve the original PDF so the signer can view it
   const fullPath = safeResolveUploadPath("original", document.originalFilename);
   if (!fsSync.default.existsSync(fullPath)) throw new AppError("File not found", 404);
@@ -61,7 +69,8 @@ export const listEnvelopes = async (req: Request, res: Response): Promise<void> 
       signerEmail: e.signerEmail,
       status: e.status,
       expiresAt: e.expiresAt,
-      signingToken: e.signingToken
+      signingToken: e.signingToken,
+      signMode: (doc as any)?.signMode || "self"
     };
   });
 
@@ -69,22 +78,66 @@ export const listEnvelopes = async (req: Request, res: Response): Promise<void> 
 };
 
 export const createEnvelope = async (req: Request, res: Response): Promise<void> => {
-  const { documentId, signerEmail } = req.body as { documentId: string; signerEmail: string };
+  const { documentId, signerEmail, signMode } = req.body as { documentId: string; signerEmail: string; signMode?: "self" | "other" | "both" };
+  const adminEmail = (req as any).user?.email;
 
-  // Block creating new envelopes for already-signed documents
-  const doc = await DocumentModel.findById(documentId).lean().exec();
+  // Block creating new envelopes for already-signed or partially-signed documents
+  const doc = await DocumentModel.findById(documentId).exec();
   if (!doc) throw new AppError("Document not found", 404);
   if (doc.status === DocumentStatus.SIGNED) {
     throw new AppError("Cannot create envelope — document has already been signed", 403);
   }
+  if (doc.status === DocumentStatus.PARTIALLY_SIGNED) {
+    throw new AppError("Cannot create envelope — document is already partially signed", 403);
+  }
 
-  const token = crypto.randomBytes(16).toString("hex");
+  // Block duplicate envelopes for the same document
+  const existingEnvelopes = await EnvelopeModel.find({ documentId }).lean().exec();
+  if (existingEnvelopes.length > 0) {
+    throw new AppError("Envelopes already exist for this document", 400);
+  }
+
   const expiresAt = new Date(Date.now() + config.SIGNING_TOKEN_EXPIRY_HOURS * 60 * 60 * 1000);
 
-  const envelope = await EnvelopeModel.create({ documentId, signerEmail, signingToken: token, expiresAt });
-  await AuditLogModel.create({ envelopeId: envelope._id, action: "envelope_created", timestamp: new Date(), metadata: { signerEmail } });
-  // Return both token and envelopeId so admin UIs can reference the envelope when creating fields
-  res.status(201).json({ token, envelopeId: envelope._id });
+  if (signMode === "both") {
+    // Validate: signer email must differ from admin
+    if (!adminEmail) throw new AppError("Admin email not available", 400);
+    if (signerEmail.toLowerCase() === adminEmail.toLowerCase()) {
+      throw new AppError("Signer email must be different from your own email for 'both' mode", 400);
+    }
+
+    // Create admin envelope
+    const adminToken = crypto.randomBytes(16).toString("hex");
+    const adminEnvelope = await EnvelopeModel.create({ documentId, signerEmail: adminEmail, signingToken: adminToken, expiresAt });
+    await AuditLogModel.create({ envelopeId: adminEnvelope._id, action: "envelope_created", timestamp: new Date(), metadata: { signerEmail: adminEmail, signMode: "both", role: "admin" } });
+
+    // Create signer envelope
+    const signerToken = crypto.randomBytes(16).toString("hex");
+    const signerEnvelope = await EnvelopeModel.create({ documentId, signerEmail, signingToken: signerToken, expiresAt });
+    await AuditLogModel.create({ envelopeId: signerEnvelope._id, action: "envelope_created", timestamp: new Date(), metadata: { signerEmail, signMode: "both", role: "signer" } });
+
+    // Update document signMode
+    doc.signMode = "both";
+    await doc.save();
+
+    res.status(201).json({
+      signMode: "both",
+      adminEnvelope: { token: adminToken, envelopeId: adminEnvelope._id },
+      signerEnvelope: { token: signerToken, envelopeId: signerEnvelope._id }
+    });
+  } else {
+    // Existing behavior for "self" and "other" modes
+    const token = crypto.randomBytes(16).toString("hex");
+    const envelope = await EnvelopeModel.create({ documentId, signerEmail, signingToken: token, expiresAt });
+    await AuditLogModel.create({ envelopeId: envelope._id, action: "envelope_created", timestamp: new Date(), metadata: { signerEmail } });
+
+    if (signMode) {
+      doc.signMode = signMode;
+      await doc.save();
+    }
+
+    res.status(201).json({ token, envelopeId: envelope._id });
+  }
 };
 
 export const getSignPage = async (req: Request, res: Response): Promise<void> => {
@@ -145,13 +198,26 @@ export const submitSignature = async (req: Request, res: Response): Promise<void
   const primarySig = signatureBase64 || (fieldSignatures?.[0]?.data);
   if (!primarySig) throw new AppError("Invalid signature format", 400);
 
-  // Recalculate original file hash
+  // Determine document and base PDF to sign on
   const document = await DocumentModel.findById(envelope.documentId).exec();
   if (!document) throw new AppError("Document missing", 404);
 
-  const currentHash = await generateFileHash(document.originalFilePath);
-  if (currentHash !== document.originalHash) {
-    throw new AppError("Document hash mismatch - possible tampering", 400);
+  // If document is partially signed (first signer already signed), use the
+  // intermediate PDF as the base so the second signer's marks are layered on top.
+  let basePdfPath: string;
+  if (document.status === DocumentStatus.PARTIALLY_SIGNED && document.finalFilePath) {
+    const fsCheck = await import("fs");
+    if (!fsCheck.default.existsSync(document.finalFilePath)) {
+      throw new AppError("Intermediate signed file missing on disk", 404);
+    }
+    basePdfPath = document.finalFilePath;
+  } else {
+    basePdfPath = document.originalFilePath;
+    // Verify original file hash to detect tampering
+    const currentHash = await generateFileHash(document.originalFilePath);
+    if (currentHash !== document.originalHash) {
+      throw new AppError("Document hash mismatch - possible tampering", 400);
+    }
   }
 
   // Convert base64 data-URL to buffer, returning the MIME subtype alongside
@@ -170,7 +236,7 @@ export const submitSignature = async (req: Request, res: Response): Promise<void
   await fs.writeFile(sigPath, primaryData);
 
   // Embed signatures into PDF
-  const pdfBytes = await fs.readFile(document.originalFilePath);
+  const pdfBytes = await fs.readFile(basePdfPath);
   const pdfDoc = await PDFDocument.load(pdfBytes);
   const pages = pdfDoc.getPages();
   const firstPage = pages[0];
@@ -256,9 +322,15 @@ export const submitSignature = async (req: Request, res: Response): Promise<void
   // Record signature
   const sig = await SignatureModel.create({ envelopeId: envelope._id, signatureFilePath: sigPath, signedAt: new Date(), ipAddress: req.ip, userAgent: req.get("user-agent") || "", finalHash });
 
+  // Check if all envelopes for this document are now signed
+  const allEnvelopes = await EnvelopeModel.find({ documentId: envelope.documentId }).exec();
+  const allNowSigned = allEnvelopes.every(e =>
+    e._id.toString() === envelope._id.toString() || e.status === "signed"
+  );
+
   // Update document and envelope
   document.finalFilePath = signedPath;
-  document.status = DocumentStatus.SIGNED;
+  document.status = allNowSigned ? DocumentStatus.SIGNED : DocumentStatus.PARTIALLY_SIGNED;
   await document.save();
 
   envelope.status = "signed";

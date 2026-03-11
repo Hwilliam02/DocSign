@@ -8,6 +8,7 @@ export interface IDocument {
   title?: string;
   finalFilePath?: string;
   status: DocumentStatus;
+  signMode?: "self" | "other" | "both";
   createdBy: mongoose.Types.ObjectId;
   createdAt: Date;
 }
@@ -19,6 +20,7 @@ const DocumentSchema = new Schema<IDocument>({
   title: { type: String },
   finalFilePath: { type: String },
   status: { type: String, enum: Object.values(DocumentStatus), default: DocumentStatus.DRAFT },
+  signMode: { type: String, enum: ["self", "other", "both"], default: "self" },
   createdBy: { type: Schema.Types.ObjectId, ref: "User", required: true },
   createdAt: { type: Date, default: () => new Date() }
 });

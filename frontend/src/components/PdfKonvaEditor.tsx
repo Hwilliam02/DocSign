@@ -63,8 +63,9 @@ const PdfKonvaEditor: React.FC<Props> = ({
 }) => {
   const [imageSrc, setImageSrc] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
-  const [width, setWidth] = useState<number>(800);
-  const [height, setHeight] = useState<number>(600);
+  // Original rendered PDF canvas dimensions (at full scale)
+  const [pdfWidth, setPdfWidth] = useState<number>(800);
+  const [pdfHeight, setPdfHeight] = useState<number>(600);
   const [fields, setFields] = useState<Field[]>([]);
   const [drawing, setDrawing] = useState(false);
   const startRef = useRef<{ x: number; y: number } | null>(null);
@@ -75,6 +76,30 @@ const PdfKonvaEditor: React.FC<Props> = ({
   const pdfRef = useRef<any>(null);
   // Cache loaded HTMLImageElement for each signed signature field
   const [imageCache, setImageCache] = useState<Record<string, HTMLImageElement>>({});
+
+  // Responsive container width tracking
+  const containerRef = useRef<HTMLDivElement>(null);
+  const [containerWidth, setContainerWidth] = useState<number>(0);
+
+  useEffect(() => {
+    const el = containerRef.current;
+    if (!el) return;
+    const observer = new ResizeObserver((entries) => {
+      for (const entry of entries) {
+        setContainerWidth(entry.contentRect.width);
+      }
+    });
+    observer.observe(el);
+    setContainerWidth(el.clientWidth);
+    return () => observer.disconnect();
+  }, []);
+
+  // Display dimensions: scale down to fit container if needed
+  const displayScale = containerWidth > 0 && containerWidth < pdfWidth
+    ? containerWidth / pdfWidth
+    : 1;
+  const width = Math.floor(pdfWidth * displayScale);
+  const height = Math.floor(pdfHeight * displayScale);
 
   // Load/refresh image elements whenever signedFields changes (for signature preview)
   useEffect(() => {
@@ -127,8 +152,8 @@ const PdfKonvaEditor: React.FC<Props> = ({
       if (!ctx) return;
       canvas.width = Math.floor(viewport.width);
       canvas.height = Math.floor(viewport.height);
-      setWidth(canvas.width);
-      setHeight(canvas.height);
+      setPdfWidth(canvas.width);
+      setPdfHeight(canvas.height);
       await page.render({ canvasContext: ctx, viewport }).promise;
       setImageSrc(canvas.toDataURL("image/png"));
     } catch (e) {
@@ -280,11 +305,11 @@ const PdfKonvaEditor: React.FC<Props> = ({
         </div>
       )}
 
-      {/* Responsive scrollable canvas wrapper */}
-      <div className="w-full overflow-auto rounded-lg border border-slate-200 shadow-sm bg-slate-100">
+      {/* Responsive canvas wrapper */}
+      <div ref={containerRef} className="w-full overflow-hidden rounded-lg border border-slate-200 shadow-sm bg-slate-100">
         <div 
           className="relative mx-auto"
-          style={{ width, height, minWidth: width }}
+          style={{ width, height }}
         >
         {imageSrc && (
           <img 

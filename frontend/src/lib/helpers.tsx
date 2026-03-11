@@ -31,6 +31,12 @@ export function getStatusBadge(status: string): React.ReactNode {
           Sent
         </Badge>
       );
+    case "partially_signed":
+      return (
+        <Badge className="bg-amber-100 text-amber-800 hover:bg-amber-100 border-amber-200">
+          Partially Signed
+        </Badge>
+      );
     default:
       return (
         <Badge variant="secondary" className="bg-slate-100 text-slate-700 hover:bg-slate-100">
@@ -48,6 +54,7 @@ export interface EnvelopeRef {
   status: string;
   signingToken: string;
   signerEmail: string;
+  signMode?: string;
 }
 
 /**
@@ -58,4 +65,14 @@ export function getEnvelopeForDoc(
   documentId: string
 ): EnvelopeRef | undefined {
   return [...envelopes].reverse().find((e) => e.documentId === documentId);
+}
+
+/**
+ * Find all envelopes for a document.
+ */
+export function getEnvelopesForDoc(
+  envelopes: EnvelopeRef[],
+  documentId: string
+): EnvelopeRef[] {
+  return envelopes.filter((e) => e.documentId === documentId);
 }

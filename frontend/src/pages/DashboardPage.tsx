@@ -7,7 +7,7 @@ import { Button } from "../components/ui/button";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "../components/ui/table";
 import { FileText, Plus, FileSignature, CheckCircle, Clock, File } from "lucide-react";
 import { copyToClipboard } from "../lib/clipboard";
-import { buildSigningLink, getStatusBadge, getEnvelopeForDoc, EnvelopeRef } from "../lib/helpers";
+import { buildSigningLink, getStatusBadge, getEnvelopeForDoc, getEnvelopesForDoc, EnvelopeRef } from "../lib/helpers";
 import { notifyApiError } from "../lib/notify";
 
 interface RecentDoc { _id: string; title: string; status: string; createdAt: string }
@@ -39,7 +39,7 @@ const DashboardPage: React.FC = () => {
 
   const total = docs.length;
   const draft = docs.filter((d) => d.status === "draft").length;
-  const sent  = docs.filter((d) => d.status === "sent").length;
+  const sent  = docs.filter((d) => d.status === "sent" || d.status === "partially_signed").length;
   const signed = docs.filter((d) => d.status === "signed").length;
 
   return (
@@ -134,11 +134,19 @@ const DashboardPage: React.FC = () => {
               <TableBody>
                 {docs.slice(0, 5).map((d) => {
                   const env = getEnvelope(d._id);
+                  const allEnvs = getEnvelopesForDoc(envelopes, d._id);
+                  const isBothMode = allEnvs.length > 1 || allEnvs.some(e => (e as any).signMode === "both");
                   return (
                     <TableRow key={d._id}>
                       <TableCell className="font-medium">
                         <div>{d.title}</div>
-                        {env && <div className="text-xs text-slate-500 mt-1">Signer: {env.signerEmail}</div>}
+                        {isBothMode ? (
+                          allEnvs.map(e => (
+                            <div key={e._id} className="text-xs text-slate-500 mt-1">
+                              {e.signerEmail} {e.status === "signed" ? "✓" : "(pending)"}
+                            </div>
+                          ))
+                        ) : env && <div className="text-xs text-slate-500 mt-1">Signer: {env.signerEmail}</div>}
                       </TableCell>
                       <TableCell>
                         {getStatusBadge(d.status)}

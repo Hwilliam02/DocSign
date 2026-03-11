@@ -10,7 +10,11 @@ const router = Router();
 
 // Authenticated sender routes (JWT required)
 router.get("/envelopes", requireAuth, asyncHandler(listEnvelopes));
-router.post("/envelope", requireAuth, [body("documentId").isString(), body("signerEmail").isEmail()], validate, asyncHandler(createEnvelope));
+router.post("/envelope", requireAuth, [
+  body("documentId").isString(),
+  body("signerEmail").isEmail(),
+  body("signMode").optional().isIn(["self", "other", "both"]).withMessage("signMode must be 'self', 'other', or 'both'")
+], validate, asyncHandler(createEnvelope));
 
 // Token-based signer routes (no JWT — signing token authenticates)
 router.get("/:token/file", validateSigningToken, asyncHandler(serveSignerFile));

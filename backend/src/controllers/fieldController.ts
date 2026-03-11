@@ -9,9 +9,10 @@ import { FieldDTO, AppError, DocumentStatus } from "../types/index.js";
 const guardSigned = async (envelopeId: string): Promise<void> => {
   const envelope = await EnvelopeModel.findById(envelopeId).lean().exec();
   if (!envelope) throw new AppError("Envelope not found", 404);
-  if (envelope.status === "signed") throw new AppError("Cannot modify fields — document has already been signed", 403);
+  if (envelope.status === "signed") throw new AppError("Cannot modify fields \u2014 envelope has already been signed", 403);
   const doc = await DocumentModel.findById(envelope.documentId).lean().exec();
-  if (doc && doc.status === DocumentStatus.SIGNED) throw new AppError("Cannot modify fields — document has already been signed", 403);
+  if (doc && doc.status === DocumentStatus.SIGNED) throw new AppError("Cannot modify fields \u2014 document has already been signed", 403);
+  if (doc && doc.status === DocumentStatus.PARTIALLY_SIGNED) throw new AppError("Cannot modify fields \u2014 document is already partially signed", 403);
 };
 
 export const createField = async (req: Request, res: Response): Promise<void> => {

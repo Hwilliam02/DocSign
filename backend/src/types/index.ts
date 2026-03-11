@@ -9,6 +9,7 @@ export enum UserRole {
 export enum DocumentStatus {
   DRAFT = "draft",
   SENT = "sent",
+  PARTIALLY_SIGNED = "partially_signed",
   SIGNED = "signed"
 }
 
